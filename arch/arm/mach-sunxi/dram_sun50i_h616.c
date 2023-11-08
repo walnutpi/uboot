@@ -1099,7 +1099,8 @@ static bool mctl_phy_init(struct dram_para *para)
 	}
 
 	if (IS_ENABLED(CONFIG_DRAM_SUN50I_H616_BIT_DELAY_COMPENSATION))
-		mctl_phy_bit_delay_compensation(para);
+		if( para->type == SUNXI_DRAM_TYPE_LPDDR4 || para->type == SUNXI_DRAM_TYPE_LPDDR3 )
+			mctl_phy_bit_delay_compensation(para);
 
 	clrbits_le32(SUNXI_DRAM_PHY0_BASE + 0x60, 4);
 
@@ -1216,7 +1217,7 @@ static bool mctl_core_init(struct dram_para *para)
 	return mctl_ctrl_init(para);
 }
 
-static void mctl_auto_detect_rank_width(struct dram_para *para)
+static bool mctl_auto_detect_rank_width(struct dram_para *para)
 {
 	/* this is minimum size that it's supported */
 	para->cols = 8;
@@ -1234,27 +1235,27 @@ static void mctl_auto_detect_rank_width(struct dram_para *para)
 	para->bus_full_width = 1;
 	para->ranks = 2;
 	if (mctl_core_init(para))
-		return;
+		return true;
 
 	debug("testing 32-bit width, rank = 1\n");
 	para->bus_full_width = 1;
 	para->ranks = 1;
 	if (mctl_core_init(para))
-		return;
+		return true;
 
 	debug("testing 16-bit width, rank = 2\n");
 	para->bus_full_width = 0;
 	para->ranks = 2;
 	if (mctl_core_init(para))
-		return;
+		return true;
 
 	debug("testing 16-bit width, rank = 1\n");
 	para->bus_full_width = 0;
 	para->ranks = 1;
 	if (mctl_core_init(para))
-		return;
+		return true;
+	return false;
 
-	panic("This DRAM setup is currently not supported.\n");
 }
 
 static void mctl_auto_detect_dram_size(struct dram_para *para)
@@ -1304,6 +1305,8 @@ unsigned long sunxi_dram_init(void)
 	};
 	unsigned long size;
 
+	if (IS_ENABLED(CONFIG_SUNXI_DRAM_H616_DDR3_LPDDR4_AUTO))
+		para.type = SUNXI_DRAM_TYPE_DDR3;
 	if (IS_ENABLED(CONFIG_SUNXI_DRAM_H616_DDR3_1333))
 		para.type = SUNXI_DRAM_TYPE_DDR3;
 	if (IS_ENABLED(CONFIG_SUNXI_DRAM_H616_LPDDR3))
@@ -1316,12 +1319,27 @@ unsigned long sunxi_dram_init(void)
 	setbits_le32(0x7010310, BIT(8));
 	clrbits_le32(0x7010318, 0x3f);
 
-	mctl_auto_detect_rank_width(&para);
+	if (IS_ENABLED(CONFIG_SUNXI_DRAM_H616_DDR3_LPDDR4_AUTO))
+	{
+
+		if( ! mctl_auto_detect_rank_width(&para))
+		{
+			para.type = SUNXI_DRAM_TYPE_LPDDR4;
+			mctl_auto_detect_rank_width(&para);
+		}
+	}
+	else
+	{
+		if( ! mctl_auto_detect_rank_width(&para))
+			panic("This DRAM setup is currently not supported.\n");
+	}
+
 	mctl_auto_detect_dram_size(&para);
 
 	mctl_core_init(&para);
 
 	size = mctl_calc_size(&para);
+	debug("size=%ld\n", size);
 
 	mctl_set_master_priority();
 
